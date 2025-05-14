@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  bot:
+    build: 
+      context: .
+      target: development
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    command: npm run dev
+    environment:
+      - NODE_ENV=development
+      - COUCHDB_URL=http://db:5984
+    env_file:
+      - .env
+    depends_on:
+      - db
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /usr/src/app/src
+          ignore:
+            - node_modules/
+            - dist/
+            - .git/
+        - action: rebuild
+          path: package.json
+        - action: rebuild
+          path: tsconfig.json
+    networks:
+      - app-network
+
+  db:
+    image: couchdb:3.3.2
+    ports:
+      - "5984:5984"
+    environment:
+      - COUCHDB_USER=${COUCHDB_USERNAME}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD}
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+      - couchdb-config:/opt/couchdb/etc/local.d
+    networks:
+      - app-network
+
+volumes:
+  couchdb-data:
+  couchdb-config:
+
+networks:
+  app-network:
+    driver: bridge 

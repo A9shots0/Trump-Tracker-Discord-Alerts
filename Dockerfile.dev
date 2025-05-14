@@ -1,0 +1,18 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install nodemon globally for hot reloading
+RUN npm install -g nodemon
+
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy tsconfig and source files
+COPY tsconfig.json ./
+COPY src ./src
+COPY .env ./
+
+# Command to run nodemon in watch mode
+CMD ["npm", "run", "dev:watch"] 
