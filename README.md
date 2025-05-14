@@ -2,6 +2,10 @@
 
 A Discord bot that tracks and posts updates from Donald Trump's Truth Social account.
 
+## Example Output
+
+![Trump Tracker Bot Example](https://i.imgur.com/oh93d64.png)
+
 ## Features
 
 - Monitors Truth Social for new posts from @realDonaldTrump
