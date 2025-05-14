@@ -22,7 +22,24 @@ interface TruthSocialApiPost {
   url: string;
   content: string;
   account: TruthSocialAccount;
-  media_attachments: any[];
+  media_attachments: {
+    type: string;
+    url: string;
+    preview_url?: string;
+    meta?: {
+      original?: {
+        width: number;
+        height: number;
+        aspect: number;
+      };
+      small?: {
+        width: number;
+        height: number;
+        aspect: number;
+        url: string;
+      };
+    };
+  }[];
   card: any;
   replies_count: number;
   reblogs_count: number;
@@ -40,6 +57,11 @@ interface TruthSocialPost {
   content: string;
   createdAt: string;
   url: string;
+  media_attachments?: {
+    type: string;
+    url: string;
+    preview_url: string;
+  }[];
 }
 
 class TruthSocialService {
@@ -82,11 +104,31 @@ class TruthSocialService {
       this.errorCount = 0;
 
       if (response.data && response.data.success && response.data.posts && response.data.posts.length > 0) {
+        // Detailed logging of media attachments for debugging
+        const firstPost = response.data.posts[0];
+        if (firstPost.media_attachments?.length > 0) {
+          console.log('=== Media Attachment Debug Info ===');
+          firstPost.media_attachments.forEach((media, index) => {
+            console.log(`Media ${index + 1}:`);
+            console.log('Type:', media.type);
+            console.log('URL:', media.url);
+            console.log('Preview URL:', media.preview_url);
+            console.log('Meta:', JSON.stringify(media.meta, null, 2));
+            console.log('Full attachment:', JSON.stringify(media, null, 2));
+            console.log('------------------------');
+          });
+        }
+
         const posts = response.data.posts.map((post: TruthSocialApiPost) => ({
           id: post.id,
           content: post.text || post.content.replace(/<[^>]*>/g, ''), // Strip HTML tags
           createdAt: post.created_at,
-          url: post.url
+          url: post.url,
+          media_attachments: post.media_attachments.map(media => ({
+            type: media.type,
+            url: media.url,
+            preview_url: media.preview_url || ''  // Convert null/undefined to empty string to match type
+          }))
         }));
 
         // Process newest posts first (they should already be in chronological order, newest first)

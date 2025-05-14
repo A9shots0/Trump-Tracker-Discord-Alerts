@@ -1,5 +1,7 @@
-import { Client, GatewayIntentBits, TextChannel, EmbedBuilder, Colors, APIEmbedField } from 'discord.js';
+import { Client, GatewayIntentBits, TextChannel, EmbedBuilder, Colors, APIEmbedField, AttachmentBuilder } from 'discord.js';
 import dotenv from 'dotenv';
+import axios from 'axios';
+import { randomUUID } from 'crypto';
 
 dotenv.config();
 
@@ -8,6 +10,18 @@ interface TruthSocialPost {
   content: string;
   createdAt: string;
   url: string;
+  media_attachments?: {
+    type: string;
+    url: string;
+    preview_url: string;
+    meta?: {
+      original?: {
+        duration?: number;
+        width?: number;
+        height?: number;
+      };
+    };
+  }[];
 }
 
 interface RedditPost {
@@ -28,11 +42,22 @@ function truncateText(text: string, maxLength: number = 2000): string {
   return text.substring(0, maxLength - 3) + '...';
 }
 
-// Extract an image URL from content if available
-function extractImageUrl(content: string): string | null {
+// Extract an image or video URL from content if available
+function extractMediaUrl(content: string): { url: string | null, type: 'image' | 'video' | null } {
   const imgRegex = /(https?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp)(?:\?\S*)?)/i;
-  const match = content.match(imgRegex);
-  return match ? match[1] : null;
+  const videoRegex = /(https?:\/\/\S+\.(?:mp4|mov|webm|avi)(?:\?\S*)?)/i;
+  
+  const imgMatch = content.match(imgRegex);
+  if (imgMatch) {
+    return { url: imgMatch[1], type: 'image' };
+  }
+
+  const videoMatch = content.match(videoRegex);
+  if (videoMatch) {
+    return { url: videoMatch[1], type: 'video' };
+  }
+
+  return { url: null, type: null };
 }
 
 // Format date for display
@@ -40,16 +65,24 @@ function formatDateForDisplay(dateString: string): string {
   // Parse the date string to make sure it's handled correctly
   const date = new Date(dateString);
   
-  // Get month, day, year for the formatted date
-  const formattedDate = date.toLocaleString('en-US', {
+  // Format the date and time using US locale and EST timezone
+  return date.toLocaleString('en-US', {
     weekday: 'short',
     month: 'short', 
     day: 'numeric',
     year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'America/New_York',
+    timeZoneName: 'short'
   });
-  
-  // Add hardcoded time "7:50 PM EST"
-  return `${formattedDate}, 7:50 PM EST`;
+}
+
+// Helper function to format video duration
+function formatDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
 class DiscordClient {
@@ -70,7 +103,6 @@ class DiscordClient {
     this.client.on('ready', () => {
       console.log(`Logged in as ${this.client.user?.tag}!`);
       this.isReady = true;
-      this.sendStartupMessage();
     });
 
     this.client.login(process.env.DISCORD_TOKEN).catch(error => {
@@ -96,42 +128,13 @@ class DiscordClient {
     }
   }
 
-  async sendStartupMessage(): Promise<void> {
-    const channel = await this.getChannel();
-    if (!channel) return;
-
-    try {
-      await channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle('🔔 Trump Tracker Bot Online')
-            .setDescription('Bot is now tracking Donald Trump\'s posts from Truth Social')
-            .setColor(Colors.Blue)
-            .setTimestamp()
-            .setFooter({ 
-              text: 'Trump Tracker Bot',
-              iconURL: 'https://i.imgur.com/XptPTJY.png'
-            })
-        ]
-      });
-    } catch (error) {
-      console.error('Error sending startup message:', error);
-    }
-  }
 
   async sendTruthSocialUpdate(post: TruthSocialPost): Promise<void> {
     const channel = await this.getChannel();
     if (!channel) return;
 
-    // Check if the post contains any images
-    const imageUrl = extractImageUrl(post.content);
-    
     // Parse the created time
     const createdTime = new Date(post.createdAt);
-    
-    // Log the date information for debugging
-    console.log(`Post date from API: ${post.createdAt}`);
-    console.log(`Parsed date: ${createdTime.toString()}`);
     
     // Format the date nicely
     const formattedDate = formatDateForDisplay(post.createdAt);
@@ -150,30 +153,90 @@ class DiscordClient {
       }
     ];
 
+    // Handle media attachments
+    const mediaAttachment = post.media_attachments?.[0];
+
     try {
       const embed = new EmbedBuilder()
-        .setTitle('📢 New Truth Social Post from Donald Trump')
-        .setDescription(truncateText(post.content, 4000))
         .setURL(post.url)
         .setColor('#FF5700')
-        .addFields(fields)
         .setFooter({ 
           text: 'Truth Social',
           iconURL: 'https://i.imgur.com/XptPTJY.png'
         });
 
-      // If image is found, add it to the embed
-      if (imageUrl) {
-        embed.setImage(imageUrl);
-      }
-
-      // Set author without icon
+      // Set author with icon
       embed.setAuthor({
         name: 'Donald J. Trump',
         url: 'https://truthsocial.com/@realDonaldTrump'
       });
 
-      await channel.send({ embeds: [embed] });
+      // Handle media attachments in the embed
+      if (mediaAttachment) {
+        if (mediaAttachment.type === 'image') {
+          // For images, use the standard layout
+          embed.setTitle('📢 New Truth Social Post from Donald Trump');
+          embed.setImage(mediaAttachment.url);
+          embed.addFields(fields);
+          
+          // If there's text content, set it as description
+          if (post.content && post.content.trim().length > 0) {
+            embed.setDescription(truncateText(post.content, 4000));
+          }
+          
+          await channel.send({ embeds: [embed] });
+        } else if (mediaAttachment.type === 'video') {
+          // For videos, use a simpler layout matching the example
+          embed.setTitle('📢 New Truth Social Post from Donald Trump');
+          
+          // Create fields exactly matching the expected format
+          const videoFields: APIEmbedField[] = [
+            {
+              name: '📹 Click to view video',
+              value: `[${mediaAttachment.url}](${mediaAttachment.url})`,
+              inline: false
+            },
+            {
+              name: '🕒 Posted',
+              value: formattedDate,
+              inline: true
+            },
+            {
+              name: '🔗 Source',
+              value: '[Truth Social](https://truthsocial.com/@realDonaldTrump)',
+              inline: true
+            }
+          ];
+          
+          // Add all fields to the embed
+          embed.addFields(videoFields);
+          
+          // Only add description if there's meaningful content
+          if (post.content && post.content.trim().length > 0) {
+            embed.setDescription(truncateText(post.content, 4000));
+          }
+
+          // No need to download and attach thumbnail for this format
+          // Send the message as is
+          await channel.send({ embeds: [embed] });
+          return;
+        }
+      } else {
+        // No media attachment, just a text post
+        embed.setTitle('📢 New Truth Social Post from Donald Trump');
+        embed.addFields(fields);
+        
+        // If there's text content, set it as description
+        if (post.content && post.content.trim().length > 0) {
+          embed.setDescription(truncateText(post.content, 4000));
+        }
+        
+        // Log the final embed structure
+        console.log('Final embed structure:', JSON.stringify(embed.toJSON(), null, 2));
+
+        await channel.send({ embeds: [embed] });
+      }
+      
     } catch (error) {
       console.error('Error sending Truth Social update:', error);
     }
@@ -184,7 +247,7 @@ class DiscordClient {
     if (!channel) return;
 
     // Try to extract an image from the content
-    const imageUrl = extractImageUrl(post.content || '');
+    const imageUrl = extractMediaUrl(post.content || '').url;
     
     // Format the content to be more readable
     let content = post.content || '';
